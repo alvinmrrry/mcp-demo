@@ -6,11 +6,7 @@ import google.generativeai as genai
 # --- Configuration ---
 
 # 1. API Key (Recommended: Use Environment Variable)
-#    Set the GOOGLE_API_KEY environment variable before running the script.
-#    Example (Linux/macOS): export GOOGLE_API_KEY="AIzaSy..."
-#    Example (Windows CMD): set GOOGLE_API_KEY="AIzaSy..."
-#    Example (Windows PowerShell): $env:GOOGLE_API_KEY="AIzaSy..."
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GOOGLE_API_KEY = "AIzaSyAdubNkNMtRoQILIQAqOXIg59FZFxBaLnM"
 
 # 2. Model Name (Verify availability in Google AI documentation)
 #    'gemini-1.5-flash-latest' is often available via the SDK.
