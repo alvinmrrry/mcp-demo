@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // 使用环境变量中的 API 密钥进行身份验证。
-const apiKey = Deno.env.get("API_KEY");
+const apiKey = 'AIzaSyAdubNkNMtRoQILIQAqOXIg59FZFxBaLnM';
 
 // 设置BASE_URL
 const BASE_URL = "https://generativelanguage.googleapis.com";
