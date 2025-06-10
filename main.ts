@@ -1,6 +1,6 @@
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
-import { createRequire } from "https://deno.land/std/node/module.ts";
+import { createRequire } from "https://deno.land/std@0.224.0/node/module.ts";
 
 const require = createRequire(import.meta.url);
 const MsgReader = require("msgreader").default; // 使用 require 导入 CommonJS 模块
