@@ -103,7 +103,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       if (file && file instanceof File) {
         const arrayBuffer = await file.arrayBuffer();
 
-        if (file.name.endsWith(".msg")) {
+        if (file.name.toLowerCase().endsWith(".msg")) {
           // 解析msg文件
           const { body, pdfAttachments } = await parseMsgFile(arrayBuffer);
           if (body) {
@@ -112,7 +112,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
           // 把每个PDF附件也转base64发给模型
           for (const pdfContent of pdfAttachments) {
-            const base64pdf = encodeBase64(pdfContent.buffer);
+            const base64pdf = encodeBase64(pdfContent); // pdfContent已是Uint8Array
             parts.push({
               inlineData: {
                 mimeType: "application/pdf",
@@ -121,7 +121,7 @@ export async function handleRequest(request: Request): Promise<Response> {
             });
           }
         } else if (file.type === "application/pdf" || file.type.startsWith("image/")) {
-          const base64Data = encodeBase64(arrayBuffer);
+          const base64Data = encodeBase64(new Uint8Array(arrayBuffer));
           parts.push({
             inlineData: {
               mimeType: file.type,
