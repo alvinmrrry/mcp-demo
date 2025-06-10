@@ -3,7 +3,6 @@ import * as XLSX from "npm:xlsx";
 
 import * as MsgReaderPkg from "npm:msgreader";
 const MsgReader = MsgReaderPkg.default || MsgReaderPkg.MsgReader;
-const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
