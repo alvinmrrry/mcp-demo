@@ -2,10 +2,10 @@ import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
 import { serveFile } from "https://deno.land/std@0.224.0/http/file_server.ts";
 
+// 关键修改：根据之前的调试输出，MsgReader 构造函数位于 MsgReaderModule.default.default
 const MsgReaderModule = await import("npm:msgreader");
+const MsgReader: any = MsgReaderModule.default.default;
 
-// 关键修改：根据调试输出确定 MsgReader 的正确路径
-const MsgReader: any = MsgReaderModule.default.default; 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
   console.error("API_KEY environment variable not set!");
@@ -21,7 +21,25 @@ async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; p
   try {
     const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
     const msgData = msgReader.getFileData();
-    const body = msgData.body || msgData.bodyHTML || "";
+
+    let bodyContent = "";
+
+    // 优先使用纯文本 body
+    if (typeof msgData.body === 'string' && msgData.body.trim() !== '') {
+        bodyContent = msgData.body;
+    } 
+    // 如果纯文本 body 不存在，尝试使用 bodyHTML 并去除 HTML 标签
+    else if (typeof msgData.bodyHTML === 'string' && msgData.bodyHTML.trim() !== '') {
+        // 简单地去除 HTML 标签
+        bodyContent = msgData.bodyHTML.replace(/<[^>]*>?/gm, '');
+        // 移除多余的空白字符并清理
+        bodyContent = bodyContent.replace(/\s+/g, ' ').trim();
+    }
+    // 确保 bodyContent 始终是字符串，即使为空
+    bodyContent = String(bodyContent);
+
+    console.log("DEBUG: Parsed MSG body (truncated to 200 chars):", bodyContent.substring(0, 200));
+    console.log("DEBUG: Type of Parsed MSG body:", typeof bodyContent);
 
     const pdfAttachments: Uint8Array[] = [];
     if (msgData.attachments && Array.isArray(msgData.attachments)) {
@@ -29,16 +47,17 @@ async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; p
         if (att.fileName && typeof att.fileName === 'string' && att.fileName.toLowerCase().endsWith(".pdf") && att.content) {
           if (att.content instanceof Uint8Array) {
               pdfAttachments.push(att.content);
-          } else if (ArrayBuffer.isView(att.content)) {
+          } else if (ArrayBuffer.isView(att.content)) { 
+              // 兼容可能是 TypedArrayView的情况 (如 Buffer)
               pdfAttachments.push(new Uint8Array(att.content.buffer));
           } else {
-              console.warn(`Unexpected content type for PDF attachment: ${typeof att.content}. Skipping.`);
+              console.warn(`DEBUG: Unexpected content type for PDF attachment: ${typeof att.content}. Skipping.`);
           }
         }
       }
     }
 
-    return { body, pdfAttachments };
+    return { body: bodyContent, pdfAttachments };
   } catch (e) {
     console.error("Error in parseMsgFile:", e);
     throw new Error(`Failed to parse MSG file: ${e.message}`);
@@ -51,6 +70,9 @@ async function callGemini(parts: any[]): Promise<string> {
     contents: [{ parts }],
   });
 
+  console.log("DEBUG: Request body being sent to Gemini API (truncated):", JSON.stringify(parts, null, 2).substring(0, 500)); // 打印发送给Gemini的parts数组
+  console.log("DEBUG: Full request body size:", requestBody.length, "bytes");
+
   const res = await fetch(
     `${BASE_URL}/${API_VERSION}/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
     {
@@ -62,6 +84,7 @@ async function callGemini(parts: any[]): Promise<string> {
 
   if (!res.ok) {
     const err = await res.text();
+    console.error("DEBUG: Gemini API raw error response:", err); // 打印Gemini的原始错误响应
     throw new Error(`Gemini API Error: ${res.status} ${res.statusText} ${err}`);
   }
 
@@ -80,7 +103,7 @@ function createExcel(data: any[]): Uint8Array {
 
 export async function handleRequest(request: Request): Promise<Response> {
   const headers = new Headers({
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": "*", // 允许所有来源的CORS请求
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   });
@@ -96,7 +119,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     try {
       const filePath = new URL("./index.html", import.meta.url).pathname;
       const fileResponse = await serveFile(request, filePath);
-      fileResponse.headers.set("Access-Control-Allow-Origin", "*");
+      fileResponse.headers.set("Access-Control-Allow-Origin", "*"); // 确保静态文件响应也包含CORS头
       return fileResponse;
     } catch (e) {
       console.error("Failed to serve index.html:", e);
@@ -185,7 +208,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         } catch (jsonError) {
           console.warn("Failed to parse as JSON for Excel output:", jsonError);
 
-          // 尝试从非标准格式中提取数据
+          // 尝试从非标准格式中提取数据 (更宽松的解析)
           try {
             const objectPattern = /\{([^}]+)\}/g;
             const arrayPattern = /\[([^\]]+)\]/g;
@@ -195,17 +218,18 @@ export async function handleRequest(request: Request): Promise<Response> {
               let match;
               while ((match = objectPattern.exec(responseText)) !== null) {
                 const objStr = `{${match[1]}}`;
+                // 尝试修复单引号问题和缺少引号的key
                 const fixedStr = objStr.replace(/([a-zA-Z0-9_]+):/g, '"$1":').replace(/'/g, '"');
                 try {
                   objects.push(JSON.parse(fixedStr));
                 } catch (e) {
-                  console.warn("Failed to parse object:", e);
+                  console.warn("Failed to parse object from pattern:", e);
                 }
               }
               if (objects.length > 0) {
                 extractedData = objects;
               } else {
-                throw new Error("No valid objects found");
+                throw new Error("No valid objects found by pattern matching");
               }
             } else if (arrayPattern.test(responseText)) {
               const arrays = [];
@@ -216,25 +240,28 @@ export async function handleRequest(request: Request): Promise<Response> {
                 try {
                   arrays.push(...JSON.parse(fixedStr));
                 } catch (e) {
-                  console.warn("Failed to parse array:", e);
+                  console.warn("Failed to parse array from pattern:", e);
                 }
               }
               if (arrays.length > 0) {
                 extractedData = arrays;
               } else {
-                throw new Error("No valid arrays found");
+                throw new Error("No valid arrays found by pattern matching");
               }
             } else {
+              // 简单文本格式作为 fallback
               extractedData = [{ description: responseText }];
             }
           } catch (patternError) {
+            console.error("Error during fallback pattern matching:", patternError);
+            // 最后手段：作为纯文本处理
             extractedData = [{ description: responseText }];
           }
         }
 
-        // 验证提取的数据
+        // 验证提取的数据，如果仍然为空则提供默认值
         if (extractedData.length === 0) {
-          extractedData = [{ description: "No data extracted" }];
+          extractedData = [{ description: "No data extracted or could not be parsed." }];
         }
 
         // 生成Excel返回
@@ -245,12 +272,12 @@ export async function handleRequest(request: Request): Promise<Response> {
 
         return new Response(excelData, { headers });
       } else {
-        // For non-.msg files or prompt only, return text directly
+        // 对于非 .msg 文件或仅提供 prompt，直接返回文本
         headers.set("Content-Type", "text/plain; charset=utf-8");
         return new Response(responseText, { headers });
       }
     } catch (e) {
-      console.error("Server error:", e);
+      console.error("Server error during /generate request:", e); // 更具体的错误日志
       headers.set("content-type", "text/plain");
       return new Response(`Server error: ${e.message}`, { status: 500, headers });
     }
