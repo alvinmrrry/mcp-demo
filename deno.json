@@ -7,7 +7,7 @@
   "imports": {
     "@std/assert": "jsr:@std/assert@1",
     "@google/generative-ai": "npm:@google/generative-ai",
-    "msgreader": "npm:msgreader",
+    "npm:msgreader": "npm:msgreader@latest",
     "xlsx": "npm:xlsx"
   }
 }
