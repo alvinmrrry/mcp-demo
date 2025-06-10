@@ -5,7 +5,7 @@ import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 // import { GoogleGenerativeAI } from "@google/generative-ai"; 
 
 // *** 1. 安全起见，恢复从环境变量读取，不要硬编码！ ***
-const apiKey = 'AIzaSyAdubNkNMtRoQILIQAqOXIg59FZFxBaLnM';
+const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
     console.error("API_KEY environment variable not set!");
     Deno.exit(1);
