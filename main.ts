@@ -1,9 +1,8 @@
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
-import { createRequire } from "https://deno.land/std@0.224.0/node/module.ts";
 
-const require = createRequire(import.meta.url);
-const MsgReader = require("msgreader").default; // 使用 require 导入 CommonJS 模块
+import * as MsgReaderPkg from "npm:msgreader";
+const MsgReader = MsgReaderPkg.default || MsgReaderPkg.MsgReader;
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
@@ -94,16 +93,16 @@ export async function handleRequest(request: Request): Promise<Response> {
     try {
       const formData = await request.formData();
 
-      const prompt = (formData.get("prompt") as string | null)?.trim() || "";
+      const prompt = (formData.get("prompt") as string) || "";
       const file = formData.get("file") as File | null;
 
       const parts: any[] = [];
-      if (prompt) {
+      if (prompt.trim()) {
         parts.push({ text: prompt });
       }
 
       // 如果上传了文件，按类型处理
-      if (file) {
+      if (file && file instanceof File) {
         const arrayBuffer = await file.arrayBuffer();
 
         if (file.name.toLowerCase().endsWith(".msg")) {
@@ -135,7 +134,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           const decoder = new TextDecoder();
           parts.push({ text: decoder.decode(arrayBuffer) });
         } else {
-          parts.push({ text: `无法处理的文件类型: ${file.name} (${file.type})` });
+          // 其他类型按需处理
         }
       }
 
@@ -150,73 +149,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       // 假设大模型返回JSON数组 [{ product, model, quantity, price }, ...]
       let extractedData: any[] = [];
       try {
-        // 先尝试解析标准JSON
         extractedData = JSON.parse(responseText);
-        
-        // 验证解析结果是否为数组
-        if (!Array.isArray(extractedData)) {
-          extractedData = [extractedData];
-        }
-      } catch (jsonError) {
-        console.warn("Failed to parse as JSON:", jsonError);
-        
-        // 尝试从非标准格式中提取数据
-        try {
-          // 提取类似 { key: value } 的模式
-          const objectPattern = /\{([^}]+)\}/g;
-          const arrayPattern = /\[([^\]]+)\]/g;
-          
-          if (objectPattern.test(responseText)) {
-            // 包含对象的情况
-            const objects = [];
-            let match;
-            while ((match = objectPattern.exec(responseText)) !== null) {
-              const objStr = `{${match[1]}}`;
-              // 尝试修复单引号问题
-              const fixedStr = objStr.replace(/([a-zA-Z0-9_]+):/g, '"$1":').replace(/'/g, '"');
-              try {
-                objects.push(JSON.parse(fixedStr));
-              } catch (e) {
-                console.warn("Failed to parse object:", e);
-              }
-            }
-            if (objects.length > 0) {
-              extractedData = objects;
-            } else {
-              throw new Error("No valid objects found");
-            }
-          } else if (arrayPattern.test(responseText)) {
-            // 包含数组的情况
-            const arrays = [];
-            let match;
-            while ((match = arrayPattern.exec(responseText)) !== null) {
-              const arrStr = `[${match[1]}]`;
-              // 尝试修复单引号问题
-              const fixedStr = arrStr.replace(/([a-zA-Z0-9_]+):/g, '"$1":').replace(/'/g, '"');
-              try {
-                arrays.push(...JSON.parse(fixedStr));
-              } catch (e) {
-                console.warn("Failed to parse array:", e);
-              }
-            }
-            if (arrays.length > 0) {
-              extractedData = arrays;
-            } else {
-              throw new Error("No valid arrays found");
-            }
-          } else {
-            // 简单文本格式
-            extractedData = [{ description: responseText }];
-          }
-        } catch (patternError) {
-          // 最后手段：作为纯文本处理
-          extractedData = [{ description: responseText }];
-        }
-      }
-
-      // 验证提取的数据
-      if (extractedData.length === 0) {
-        extractedData = [{ description: "No data extracted" }];
+      } catch {
+        // 返回文本格式，尝试简单包装为数组
+        extractedData = [{ description: responseText }];
       }
 
       // 生成Excel返回
@@ -227,7 +163,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       return new Response(excelData, { headers });
     } catch (e) {
-      console.error("Server error:", e);
+      console.error(e);
       headers.set("content-type", "text/plain");
       return new Response(`Server error: ${e.message}`, { status: 500, headers });
     }
