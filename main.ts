@@ -1,6 +1,7 @@
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
 import * as MsgReaderPkg from "npm:msgreader";
+import MsgReaderPkg from "npm:msgreader";
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
