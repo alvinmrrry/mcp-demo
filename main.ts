@@ -14,7 +14,8 @@ if (!apiKey) {
 
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
-const MODEL_NAME = "gemini-2.0-flash";
+// MODIFICATION: Updated model to one that strongly supports tool use.
+const MODEL_NAME = "gemini-1.5-pro-latest";
 
 // 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
 async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
@@ -64,33 +65,96 @@ async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; p
   }
 }
 
-// 用于调用Gemini大模型接口
+// MODIFICATION: Rewritten callGemini to handle streaming and tools (Google Search, Code Execution)
 async function callGemini(parts: any[]): Promise<string> {
-  const requestBody = JSON.stringify({
-    contents: [{ parts }],
-  });
+    const tools = [{ "googleSearch": {} }, { "codeExecution": {} }];
 
-  console.log("DEBUG: Request body being sent to Gemini API (truncated):", JSON.stringify(parts, null, 2).substring(0, 500)); // 打印发送给Gemini的parts数组
-  console.log("DEBUG: Full request body size:", requestBody.length, "bytes");
+    const requestBody = JSON.stringify({
+        contents: [{ parts }],
+        tools: tools,
+    });
 
-  const res = await fetch(
-    `${BASE_URL}/${API_VERSION}/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: requestBody,
-    },
-  );
+    console.log("DEBUG: Request body being sent to Gemini API (truncated):", JSON.stringify({ parts, tools }, null, 2).substring(0, 500));
+    console.log("DEBUG: Full request body size:", requestBody.length, "bytes");
 
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("DEBUG: Gemini API raw error response:", err); // 打印Gemini的原始错误响应
-    throw new Error(`Gemini API Error: ${res.status} ${res.statusText} ${err}`);
-  }
+    // Use streamGenerateContent endpoint with SSE
+    const res = await fetch(
+        `${BASE_URL}/${API_VERSION}/models/${MODEL_NAME}:streamGenerateContent?key=${apiKey}&alt=sse`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: requestBody,
+        },
+    );
 
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    if (!res.ok) {
+        const err = await res.text();
+        console.error("DEBUG: Gemini API raw error response:", err);
+        throw new Error(`Gemini API Error: ${res.status} ${res.statusText} ${err}`);
+    }
+    
+    if (!res.body) {
+        throw new Error("Response body is empty.");
+    }
+
+    // Process the streaming response
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let aggregatedResponse = "";
+    let buffer = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // Keep the last, possibly incomplete, line
+
+        for (const line of lines) {
+            if (line.startsWith("data: ")) {
+                const jsonStr = line.substring(6);
+                try {
+                    const chunk = JSON.parse(jsonStr);
+                    if (chunk.candidates && chunk.candidates[0].content && chunk.candidates[0].content.parts) {
+                        for (const part of chunk.candidates[0].content.parts) {
+                            if (part.text) {
+                                aggregatedResponse += part.text;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Failed to parse a JSON chunk from stream:", jsonStr, e);
+                }
+            }
+        }
+    }
+    
+    // Process any remaining data in the buffer
+    if (buffer.startsWith("data: ")) {
+        try {
+            const jsonStr = buffer.substring(6);
+            const chunk = JSON.parse(jsonStr);
+            if (chunk.candidates && chunk.candidates[0].content && chunk.candidates[0].content.parts) {
+                for (const part of chunk.candidates[0].content.parts) {
+                    if (part.text) {
+                        aggregatedResponse += part.text;
+                    }
+                }
+            }
+        } catch(e) {
+             console.warn("Failed to parse the final JSON chunk from stream:", buffer, e);
+        }
+    }
+
+    if (!aggregatedResponse) {
+        console.warn("DEBUG: Gemini response was empty after streaming.");
+        return "";
+    }
+
+    return aggregatedResponse;
 }
+
 
 // 生成Excel二进制
 function createExcel(data: any[]): Uint8Array {
