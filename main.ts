@@ -14,7 +14,7 @@ if (!apiKey) {
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
 // *** 2. 使用支持多模态（包括PDF和图片）的模型 ***
-const MODEL_NAME = "gemini-2.0-flash"; // 或 gemini-1.5-pro, gemini-pro-vision(仅图片)
+const MODEL_NAME = "gemini-1.5-flash"; // 或 gemini-1.5-pro, gemini-pro-vision(仅图片)
 
 
 async function handleRequest(request: Request): Promise<Response> {
