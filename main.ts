@@ -15,7 +15,7 @@ if (!apiKey) {
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
 // MODIFICATION: Updated model to one that strongly supports tool use.
-const MODEL_NAME = "gemini-2.5-pro-preview-06-05";
+const MODEL_NAME = "gemini-2.5-flash-preview-05-20";
 
 // 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
 async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
