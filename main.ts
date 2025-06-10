@@ -1,6 +1,9 @@
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
-import MsgReaderPkg from "npm:msgreader"; // 修改导入方式
+import { createRequire } from "https://deno.land/std@0.224.0/node/module.ts";
+
+const require = createRequire(import.meta.url);
+const MsgReader = require("msgreader").default; // 使用 require 导入 CommonJS 模块
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
@@ -14,8 +17,7 @@ const MODEL_NAME = "gemini-1.5-flash";
 
 // 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
 async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
-  // 修改实例化方式
-  const msgReader = new MsgReaderPkg(new Uint8Array(arrayBuffer));
+  const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
   const msgData = msgReader.getFileData();
   const body = msgData.body || msgData.bodyHTML || "";
 
@@ -30,6 +32,7 @@ async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; p
 
   return { body, pdfAttachments };
 }
+
 // 用于调用Gemini大模型接口
 async function callGemini(parts: any[]): Promise<string> {
   const requestBody = JSON.stringify({
