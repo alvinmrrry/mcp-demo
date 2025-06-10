@@ -2,8 +2,33 @@ import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
 import { serveFile } from "https://deno.land/std@0.224.0/http/file_server.ts";
 
-// 关键修改：直接导入 MsgReader
-import MsgReader from "npm:msgreader";
+const MsgReaderModule = await import("npm:msgreader");
+
+// 关键修改：根据调试输出确定 MsgReader 的正确路径
+const MsgReader: any = MsgReaderModule.default.default; 
+
+// 移除之前的调试日志和自动判断逻辑，因为我们已经找到了正确的路径
+// console.log("DEBUG: --- MsgReaderModule Inspection ---");
+// console.log("DEBUG: Raw MsgReaderModule:", MsgReaderModule);
+// console.log("DEBUG: Type of MsgReaderModule:", typeof MsgReaderModule);
+// console.log("DEBUG: Keys in MsgReaderModule:", Object.keys(MsgReaderModule));
+// console.log("DEBUG: MsgReaderModule.default:", MsgReaderModule.default);
+// console.log("DEBUG: Type of MsgReaderModule.default:", typeof MsgReaderModule.default);
+// console.log("DEBUG: Is MsgReaderModule.default callable?", typeof MsgReaderModule.default === 'function');
+// console.log("DEBUG: Is MsgReaderModule callable (itself)?", typeof MsgReaderModule === 'function');
+// console.log("DEBUG: --- End MsgReaderModule Inspection ---");
+// if (typeof MsgReaderModule === 'function') {
+//     MsgReader = MsgReaderModule;
+//     console.log("DEBUG: Assuming MsgReaderModule itself is the constructor.");
+// } else if (typeof MsgReaderModule.default === 'function') {
+//     MsgReader = MsgReaderModule.default;
+//     console.log("DEBUG: Assuming MsgReaderModule.default is the constructor.");
+// } else {
+//     console.error("DEBUG: Could not automatically determine MsgReader constructor.");
+//     console.error("DEBUG: Please inspect the 'Raw MsgReaderModule' output above and manually assign the correct constructor.");
+//     Deno.exit(1);
+// }
+
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
@@ -17,26 +42,31 @@ const MODEL_NAME = "gemini-2.0-flash";
 
 // 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
 async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
-  // 这里的 MsgReader 现在是直接导入的构造函数
-  const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
-  const msgData = msgReader.getFileData();
-  const body = msgData.body || msgData.bodyHTML || "";
+  try {
+    const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
+    const msgData = msgReader.getFileData();
+    const body = msgData.body || msgData.bodyHTML || "";
 
-  const pdfAttachments: Uint8Array[] = [];
-  if (msgData.attachments && Array.isArray(msgData.attachments)) {
-    for (const att of msgData.attachments) {
-      if (att.fileName && typeof att.fileName === 'string' && att.fileName.toLowerCase().endsWith(".pdf") && att.content) {
-        // 确保 content 是 Uint8Array 类型
-        if (att.content instanceof Uint8Array) {
-            pdfAttachments.push(att.content);
-        } else if (ArrayBuffer.isView(att.content)) { // 兼容可能是 TypedArrayView的情况
-            pdfAttachments.push(new Uint8Array(att.content.buffer));
+    const pdfAttachments: Uint8Array[] = [];
+    if (msgData.attachments && Array.isArray(msgData.attachments)) {
+      for (const att of msgData.attachments) {
+        if (att.fileName && typeof att.fileName === 'string' && att.fileName.toLowerCase().endsWith(".pdf") && att.content) {
+          if (att.content instanceof Uint8Array) {
+              pdfAttachments.push(att.content);
+          } else if (ArrayBuffer.isView(att.content)) {
+              pdfAttachments.push(new Uint8Array(att.content.buffer));
+          } else {
+              console.warn(`Unexpected content type for PDF attachment: ${typeof att.content}. Skipping.`);
+          }
         }
       }
     }
-  }
 
-  return { body, pdfAttachments };
+    return { body, pdfAttachments };
+  } catch (e) {
+    console.error("Error in parseMsgFile:", e);
+    throw new Error(`Failed to parse MSG file: ${e.message}`);
+  }
 }
 
 // 用于调用Gemini大模型接口
@@ -90,7 +120,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     try {
       const filePath = new URL("./index.html", import.meta.url).pathname;
       const fileResponse = await serveFile(request, filePath);
-      fileResponse.headers.set("Access-Control-Allow-Origin", "*"); // 确保CORS头
+      fileResponse.headers.set("Access-Control-Allow-Origin", "*");
       return fileResponse;
     } catch (e) {
       console.error("Failed to serve index.html:", e);
@@ -181,17 +211,14 @@ export async function handleRequest(request: Request): Promise<Response> {
 
           // 尝试从非标准格式中提取数据
           try {
-            // 提取类似 { key: value } 的模式
             const objectPattern = /\{([^}]+)\}/g;
             const arrayPattern = /\[([^\]]+)\]/g;
 
             if (objectPattern.test(responseText)) {
-              // 包含对象的情况
               const objects = [];
               let match;
               while ((match = objectPattern.exec(responseText)) !== null) {
                 const objStr = `{${match[1]}}`;
-                // 尝试修复单引号问题
                 const fixedStr = objStr.replace(/([a-zA-Z0-9_]+):/g, '"$1":').replace(/'/g, '"');
                 try {
                   objects.push(JSON.parse(fixedStr));
@@ -205,12 +232,10 @@ export async function handleRequest(request: Request): Promise<Response> {
                 throw new Error("No valid objects found");
               }
             } else if (arrayPattern.test(responseText)) {
-              // 包含数组的情况
               const arrays = [];
               let match;
               while ((match = arrayPattern.exec(responseText)) !== null) {
                 const arrStr = `[${match[1]}]`;
-                // 尝试修复单引号问题
                 const fixedStr = arrStr.replace(/([a-zA-Z0-9_]+):/g, '"$1":').replace(/'/g, '"');
                 try {
                   arrays.push(...JSON.parse(fixedStr));
@@ -224,11 +249,9 @@ export async function handleRequest(request: Request): Promise<Response> {
                 throw new Error("No valid arrays found");
               }
             } else {
-              // 简单文本格式
               extractedData = [{ description: responseText }];
             }
           } catch (patternError) {
-            // 最后手段：作为纯文本处理
             extractedData = [{ description: responseText }];
           }
         }
