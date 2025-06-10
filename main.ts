@@ -30,7 +30,6 @@ async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; p
 
   return { body, pdfAttachments };
 }
-
 // 用于调用Gemini大模型接口
 async function callGemini(parts: any[]): Promise<string> {
   const requestBody = JSON.stringify({
