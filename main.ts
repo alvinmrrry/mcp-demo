@@ -6,30 +6,6 @@ const MsgReaderModule = await import("npm:msgreader");
 
 // 关键修改：根据调试输出确定 MsgReader 的正确路径
 const MsgReader: any = MsgReaderModule.default.default; 
-
-// 移除之前的调试日志和自动判断逻辑，因为我们已经找到了正确的路径
-// console.log("DEBUG: --- MsgReaderModule Inspection ---");
-// console.log("DEBUG: Raw MsgReaderModule:", MsgReaderModule);
-// console.log("DEBUG: Type of MsgReaderModule:", typeof MsgReaderModule);
-// console.log("DEBUG: Keys in MsgReaderModule:", Object.keys(MsgReaderModule));
-// console.log("DEBUG: MsgReaderModule.default:", MsgReaderModule.default);
-// console.log("DEBUG: Type of MsgReaderModule.default:", typeof MsgReaderModule.default);
-// console.log("DEBUG: Is MsgReaderModule.default callable?", typeof MsgReaderModule.default === 'function');
-// console.log("DEBUG: Is MsgReaderModule callable (itself)?", typeof MsgReaderModule === 'function');
-// console.log("DEBUG: --- End MsgReaderModule Inspection ---");
-// if (typeof MsgReaderModule === 'function') {
-//     MsgReader = MsgReaderModule;
-//     console.log("DEBUG: Assuming MsgReaderModule itself is the constructor.");
-// } else if (typeof MsgReaderModule.default === 'function') {
-//     MsgReader = MsgReaderModule.default;
-//     console.log("DEBUG: Assuming MsgReaderModule.default is the constructor.");
-// } else {
-//     console.error("DEBUG: Could not automatically determine MsgReader constructor.");
-//     console.error("DEBUG: Please inspect the 'Raw MsgReaderModule' output above and manually assign the correct constructor.");
-//     Deno.exit(1);
-// }
-
-
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
   console.error("API_KEY environment variable not set!");
