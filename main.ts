@@ -1,8 +1,10 @@
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
+import { serveFile } from "https://deno.land/std@0.224.0/http/file_server.ts"; // 导入 serveFile 以提供静态文件
 
+// 修改这里的导入方式
 const MsgReaderModule = await import("npm:msgreader");
-const MsgReader = MsgReaderModule.default;
+const MsgReader: any = MsgReaderModule; // 直接将导入的模块对象作为构造函数使用
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
@@ -16,6 +18,7 @@ const MODEL_NAME = "gemini-2.0-flash";
 
 // 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
 async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
+  // 使用修正后的 MsgReader
   const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
   const msgData = msgReader.getFileData();
   const body = msgData.body || msgData.bodyHTML || "";
@@ -23,7 +26,8 @@ async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; p
   const pdfAttachments: Uint8Array[] = [];
   if (msgData.attachments && Array.isArray(msgData.attachments)) {
     for (const att of msgData.attachments) {
-      if (att.fileName && att.fileName.toLowerCase().endsWith(".pdf") && att.content) {
+      // 确保 content 属性存在且是 Uint8Array 类型
+      if (att.fileName && typeof att.fileName === 'string' && att.fileName.toLowerCase().endsWith(".pdf") && att.content instanceof Uint8Array) {
         pdfAttachments.push(att.content);
       }
     }
@@ -78,9 +82,18 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   const { pathname } = new URL(request.url);
 
-  if (request.method === "GET" && pathname === "/") {
-    headers.set("content-type", "text/plain");
-    return new Response("API is running. POST multipart/form-data to /generate.", { headers });
+  // 提供 index.html 文件
+  if (pathname === "/" || pathname === "/index.html") {
+    try {
+      const filePath = new URL("./index.html", import.meta.url).pathname;
+      const fileResponse = await serveFile(request, filePath);
+      fileResponse.headers.set("Access-Control-Allow-Origin", "*"); // 确保CORS头
+      return fileResponse;
+    } catch (e) {
+      console.error("Failed to serve index.html:", e);
+      headers.set("content-type", "text/plain");
+      return new Response("Error serving index.html", { status: 500, headers });
+    }
   }
 
   if (request.method === "POST" && pathname === "/generate") {
