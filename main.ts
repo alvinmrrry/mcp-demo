@@ -102,6 +102,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       // 如果上传了文件，按类型处理
       if (file && file instanceof File) {
         const arrayBuffer = await file.arrayBuffer();
+        const msgReader = new MsgReaderPkg.MsgReader(new Uint8Array(arrayBuffer));
 
         if (file.name.toLowerCase().endsWith(".msg")) {
           // 解析msg文件
