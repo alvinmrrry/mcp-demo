@@ -1,6 +1,6 @@
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
-import { MsgReader } from "npm:msgreader"; // 修正导入方式
+import MsgReaderPkg from "npm:msgreader"; // 修改导入方式
 
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
@@ -14,7 +14,8 @@ const MODEL_NAME = "gemini-1.5-flash";
 
 // 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
 async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
-  const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
+  // 修改实例化方式
+  const msgReader = new MsgReaderPkg(new Uint8Array(arrayBuffer));
   const msgData = msgReader.getFileData();
   const body = msgData.body || msgData.bodyHTML || "";
 
