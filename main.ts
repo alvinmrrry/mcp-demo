@@ -1,164 +1,176 @@
-// server.ts
-// 导入Deno标准库的base64编码工具
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
-// 注意：虽然导入了，但代码逻辑仍然使用fetch，未使用SDK
-// import { GoogleGenerativeAI } from "@google/generative-ai"; 
+import MsgReader from "npm:msgreader";
+import * as XLSX from "npm:xlsx";
 
-// *** 1. 安全起见，恢复从环境变量读取，不要硬编码！ ***
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
-    console.error("API_KEY environment variable not set!");
-    Deno.exit(1);
+  console.error("API_KEY environment variable not set!");
+  Deno.exit(1);
 }
 
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
-// *** 2. 使用支持多模态（包括PDF和图片）的模型 ***
-const MODEL_NAME = "gemini-1.5-flash"; // 或 gemini-1.5-pro, gemini-pro-vision(仅图片)
+const MODEL_NAME = "gemini-1.5-flash";
 
+// 解析 .msg 文件，返回 { body: string, pdfAttachments: Array<Uint8Array> }
+async function parseMsgFile(arrayBuffer: ArrayBuffer): Promise<{ body: string; pdfAttachments: Uint8Array[] }> {
+  const msgReader = new MsgReader(new Uint8Array(arrayBuffer));
+  const msgData = msgReader.getFileData();
+  const body = msgData.body || msgData.bodyHTML || "";
 
-async function handleRequest(request: Request): Promise<Response> {
-  // 添加 CORS Headers 以便浏览器端可以跨域调用
-   const headers = new Headers({
-    "Access-Control-Allow-Origin": "*", // 允许所有来源，生产环境请限制
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-   });
-    
-  // 处理 CORS 预检请求
-  if (request.method === "OPTIONS") {
-       return new Response(null, { status: 204, headers: headers });
-  }
-    
-  const { pathname } = new URL(request.url);
-
-  // GET / 检查
-  if (request.method === "GET" && pathname === "/") {
-     headers.set("content-type", "text/plain");
-    return new Response("API is running. POST to /generate with multipart/form-data.", { headers });
-  }
-
-  //只处理/generate的POST请求。
-  if (request.method === "POST" && pathname === "/generate") {
-    
-     const contentType = request.headers.get("content-type");
-     // *** 3. 检查 Content-Type 是否为 multipart/form-data ***
-     if (!contentType || !contentType.includes("multipart/form-data")) {
-        headers.set("content-type", "text/plain");
-        return new Response("Content-Type must be multipart/form-data. Fields: 'prompt' (text) and/or 'file' (image/pdf).", { status: 400, headers: headers });
+  const pdfAttachments: Uint8Array[] = [];
+  if (msgData.attachments && Array.isArray(msgData.attachments)) {
+    for (const att of msgData.attachments) {
+      if (att.fileName && att.fileName.toLowerCase().endsWith(".pdf") && att.content) {
+        pdfAttachments.push(att.content);
       }
-
-    try {
-       // *** 4. 解析 formData 而不是 json ***
-       const formData = await request.formData();
-       // 获取文本字段 'prompt'
-       const prompt = formData.get("prompt") as string | null;
-        // 获取文件字段 'file'
-       const file = formData.get("file") as File | null; // 注意类型断言
-
-       const parts: any[] = [];
-
-       // 添加文本 part
-       if (prompt) {
-          parts.push({ text: prompt });
-       }
-
-       // *** 5. 处理文件并添加 inlineData part ***
-        if (file && file instanceof File) {
-           if (!file.type) {
-               headers.set("content-type", "text/plain");
-               return new Response("Cannot determine file MIME type from upload.", { status: 400, headers: headers });
-           }
-            // 读取文件内容到 ArrayBuffer
-           const fileBuffer = await file.arrayBuffer();
-           // 将 ArrayBuffer 编码为 Base64 字符串
-           const base64Data = encodeBase64(fileBuffer);
-           
-           // 构建 Gemini inlineData 结构
-           parts.push({
-               inlineData: {
-                    mimeType: file.type, // 例如: image/png, image/jpeg, application/pdf
-                    data: base64Data,
-               }
-            });
-             console.log(`Received file: ${file.name}, type: ${file.type}, size: ${file.size}`);
-        }
-        
-        // 确保至少有一个 part (prompt 或 file)
-       if(parts.length === 0){
-          headers.set("content-type", "text/plain");
-           return new Response("Form must contain either a 'prompt' field or a 'file' field (or both).", { status: 400, headers: headers });
-       }
-       console.log("Sending parts count:", parts.length , "Prompt:", prompt ? "Yes": "No", "File:", file? "Yes": "No");
-
-
-      // *** 6. 构建包含动态 parts 的请求体 ***
-      const requestBody =  JSON.stringify({
-            contents: [{ parts: parts }], // 使用动态构建的 parts 数组
-            // 可选：添加安全设置或生成配置
-            // safetySettings: [...],
-            // generationConfig: { temperature: 0.7 } 
-       });
-        
-      //调用Gemini API。
-      const geminiResponse = await fetch(
-        `${BASE_URL}/${API_VERSION}/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: requestBody,
-        },
-      );
-
-      //检查响应是否成功。
-      if (!geminiResponse.ok) {
-        // 打印更详细的错误信息
-        const errorBody = await geminiResponse.text(); 
-        console.error("Gemini API error:", geminiResponse.status, geminiResponse.statusText, errorBody);
-         headers.set("content-type", "application/json");
-        return new Response(JSON.stringify({error: "Gemini API Error", details: errorBody}), { status: 500, headers: headers });
-      }
-
-      //解析Gemini API 的响应体，提取文本并将其返回。
-      const data = await geminiResponse.json();
-       // console.log("Gemini Raw Response:", JSON.stringify(data, null, 2)); // 调试用
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!text) {
-         // 检查是否有内容因安全原因被阻止
-         const finishReason = data.candidates?.[0]?.finishReason;
-         let errMsg = "No text response from Gemini API";
-         if(finishReason && finishReason !== 'STOP'){
-             errMsg = `Gemini API blocked content. Reason: ${finishReason}`;
-              console.warn(errMsg, JSON.stringify(data?.promptFeedback));
-         } else {
-            console.error("No valid text candidate found in Gemini response:", JSON.stringify(data));
-         }
-          headers.set("content-type", "text/plain");
-          // 如果是因为安全原因，返回400或特定状态，否则500
-          const status = (finishReason && finishReason !== 'STOP') ? 400 : 500;
-         return new Response(errMsg, { status: status , headers: headers});
-      }
-	  
-      headers.set("Content-Type", "text/plain; charset=utf-8");
-      return new Response(text, { headers: headers });
-
-    } catch (error) {
-      console.error("handleRequest error", error);
-       headers.set("content-type", "application/json");
-      // 捕获 formData 解析错误等
-      return new Response(JSON.stringify({ error: "Server Error", message: error.message }), { status: 500 , headers: headers});
     }
   }
 
-  //对于所有其他请求，返回 "404 Not Found"。
-   headers.set("content-type", "text/plain");
-  return new Response("Not Found", { status: 404, headers: headers });
+  return { body, pdfAttachments };
 }
 
-// 使用提供的处理函数来启动Deno服务器。
+// 用于调用Gemini大模型接口
+async function callGemini(parts: any[]): Promise<string> {
+  const requestBody = JSON.stringify({
+    contents: [{ parts }],
+  });
+
+  const res = await fetch(
+    `${BASE_URL}/${API_VERSION}/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: requestBody,
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API Error: ${res.status} ${res.statusText} ${err}`);
+  }
+
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// 生成Excel二进制
+function createExcel(data: any[]): Uint8Array {
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  return new Uint8Array(wbout);
+}
+
+export async function handleRequest(request: Request): Promise<Response> {
+  const headers = new Headers({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  });
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers });
+  }
+
+  const { pathname } = new URL(request.url);
+
+  if (request.method === "GET" && pathname === "/") {
+    headers.set("content-type", "text/plain");
+    return new Response("API is running. POST multipart/form-data to /generate.", { headers });
+  }
+
+  if (request.method === "POST" && pathname === "/generate") {
+    const contentType = request.headers.get("content-type") || "";
+    if (!contentType.includes("multipart/form-data")) {
+      headers.set("content-type", "text/plain");
+      return new Response("Content-Type must be multipart/form-data.", { status: 400, headers });
+    }
+
+    try {
+      const formData = await request.formData();
+
+      const prompt = (formData.get("prompt") as string) || "";
+      const file = formData.get("file") as File | null;
+
+      const parts: any[] = [];
+      if (prompt.trim()) {
+        parts.push({ text: prompt });
+      }
+
+      // 如果上传了文件，按类型处理
+      if (file && file instanceof File) {
+        const arrayBuffer = await file.arrayBuffer();
+
+        if (file.name.endsWith(".msg")) {
+          // 解析msg文件
+          const { body, pdfAttachments } = await parseMsgFile(arrayBuffer);
+          if (body) {
+            parts.push({ text: body });
+          }
+
+          // 把每个PDF附件也转base64发给模型
+          for (const pdfContent of pdfAttachments) {
+            const base64pdf = encodeBase64(pdfContent.buffer);
+            parts.push({
+              inlineData: {
+                mimeType: "application/pdf",
+                data: base64pdf,
+              },
+            });
+          }
+        } else if (file.type === "application/pdf" || file.type.startsWith("image/")) {
+          const base64Data = encodeBase64(arrayBuffer);
+          parts.push({
+            inlineData: {
+              mimeType: file.type,
+              data: base64Data,
+            },
+          });
+        } else if (file.type.startsWith("text/")) {
+          const decoder = new TextDecoder();
+          parts.push({ text: decoder.decode(arrayBuffer) });
+        } else {
+          // 其他类型按需处理
+        }
+      }
+
+      if (parts.length === 0) {
+        headers.set("content-type", "text/plain");
+        return new Response("Must provide prompt or file.", { status: 400, headers });
+      }
+
+      // 调用大模型，期望返回提取的结构化数据JSON字符串
+      const responseText = await callGemini(parts);
+
+      // 假设大模型返回JSON数组 [{ product, model, quantity, price }, ...]
+      let extractedData: any[] = [];
+      try {
+        extractedData = JSON.parse(responseText);
+      } catch {
+        // 返回文本格式，尝试简单包装为数组
+        extractedData = [{ description: responseText }];
+      }
+
+      // 生成Excel返回
+      const excelData = createExcel(extractedData);
+
+      headers.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      headers.set("Content-Disposition", "attachment; filename=extracted_data.xlsx");
+
+      return new Response(excelData, { headers });
+    } catch (e) {
+      console.error(e);
+      headers.set("content-type", "text/plain");
+      return new Response(`Server error: ${e.message}`, { status: 500, headers });
+    }
+  }
+
+  headers.set("content-type", "text/plain");
+  return new Response("Not Found", { status: 404, headers });
+}
+
+// 直接启动服务器
 Deno.serve({ port: 8000 }, handleRequest);
 console.log(`Server with ${MODEL_NAME} started on http://localhost:8000`);
-console.log("POST to /generate with multipart/form-data ('prompt' and/or 'file')");
