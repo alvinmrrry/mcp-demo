@@ -2,8 +2,6 @@ import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import * as XLSX from "npm:xlsx";
 import { serveFile } from "https://deno.land/std@0.224.0/http/file_server.ts";
 
-// .msg file parsing logic has been removed.
-
 const apiKey = Deno.env.get("API_KEY");
 if (!apiKey) {
   console.error("API_KEY environment variable not set!");
@@ -12,22 +10,21 @@ if (!apiKey) {
 
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
-const MODEL_NAME = "gemini-1.5-flash-latest"; // Using a recent model
+const MODEL_NAME = "gemini-1.5-flash-latest";
 
-// 用于调用Gemini大模型接口
+// 调用Gemini大模型接口
 async function callGemini(parts: any[]): Promise<string> {
   const requestBody = JSON.stringify({
     contents: [{ parts }],
-    // Added a system instruction to encourage JSON output for file processing
+    // 关键修改：系统指令更加明确，只在处理PDF时强制要求JSON
     "systemInstruction": {
         "parts": {
-            "text": "When a file (PDF or image) is provided, analyze its content and extract structured data. Always format the output as a JSON array of objects. Each object should represent an item found in the document. If no structured data is found, return an empty JSON array []."
+            "text": "If processing a PDF file, analyze its content to extract structured data and strictly format the output as a JSON array of objects. For all other requests (text or images), respond as a helpful conversational assistant."
         }
     }
   });
 
   console.log("DEBUG: Request body being sent to Gemini API (truncated):", JSON.stringify(parts, null, 2).substring(0, 500));
-  console.log("DEBUG: Full request body size:", requestBody.length, "bytes");
 
   const res = await fetch(
     `${BASE_URL}/${API_VERSION}/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
@@ -47,16 +44,15 @@ async function callGemini(parts: any[]): Promise<string> {
   const data = await res.json();
   const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
   
-  // Clean up potential markdown formatting from the response
+  // 清理模型可能返回的Markdown代码块标记
   return responseText.replace(/```json\n|```/g, "").trim();
 }
 
-// 生成Excel二进制
+// 生成Excel二进制文件
 function createExcel(data: any[]): Uint8Array {
-  // Ensure data is always an array, even if a single object is passed
   const sheetData = Array.isArray(data) ? data : [data];
   if (sheetData.length === 0) {
-      sheetData.push({ status: "No data could be extracted from the document." });
+      sheetData.push({ status: "The AI did not find any data to extract from the PDF." });
   }
   const ws = XLSX.utils.json_to_sheet(sheetData);
   const wb = XLSX.utils.book_new();
@@ -109,28 +105,32 @@ export async function handleRequest(request: Request): Promise<Response> {
         parts.push({ text: prompt });
       }
 
-      // Flag to determine if we should generate an Excel file for the output
+      // 关键修改：此标志仅在上传PDF时为true
       let shouldGenerateExcel = false;
 
       if (file) {
         const arrayBuffer = await file.arrayBuffer();
         const fileType = file.type;
 
-        if (fileType === "application/pdf" || fileType.startsWith("image/")) {
-          shouldGenerateExcel = true; // PDFs and Images will trigger Excel generation
+        if (fileType === "application/pdf") {
+          shouldGenerateExcel = true; // 仅为PDF文件触发Excel生成
           const base64Data = encodeBase64(new Uint8Array(arrayBuffer));
           parts.push({
-            inlineData: {
-              mimeType: fileType,
-              data: base64Data,
-            },
+            inlineData: { mimeType: fileType, data: base64Data },
+          });
+        } else if (fileType.startsWith("image/")) {
+          // 图片文件正常处理，但不触发Excel生成
+          const base64Data = encodeBase64(new Uint8Array(arrayBuffer));
+          parts.push({
+            inlineData: { mimeType: fileType, data: base64Data },
           });
         } else if (fileType.startsWith("text/")) {
+          // 文本文件正常处理，不触发Excel生成
           const decoder = new TextDecoder();
           parts.push({ text: decoder.decode(arrayBuffer) });
         } else {
-            headers.set("content-type", "text/plain");
-            return new Response(`Unsupported file type: ${file.name} (${file.type}). Please upload a PDF, image, or text file.`, { status: 400, headers });
+          headers.set("content-type", "text/plain");
+          return new Response(`Unsupported file type: ${file.name} (${file.type}). Please upload a PDF, image, or text file.`, { status: 400, headers });
         }
       }
 
@@ -141,26 +141,24 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const responseText = await callGemini(parts);
 
-      // --- Conditional Output: Generate Excel for PDF/Image, otherwise return text ---
+      // --- 条件输出：仅在上传PDF时生成Excel ---
       if (shouldGenerateExcel) {
         let extractedData: any[] = [];
         try {
-          // Attempt to parse the response as JSON
           extractedData = JSON.parse(responseText);
         } catch (jsonError) {
-          console.warn("Gemini response was not valid JSON. Treating as plain text.", jsonError);
-          // If JSON parsing fails, wrap the text in a default structure for Excel
-          extractedData = [{ result: responseText }];
+          console.warn("Gemini response was not valid JSON. Wrapping text in Excel.", jsonError);
+          extractedData = [{ error: "Failed to parse AI response as JSON.", response: responseText }];
         }
 
-        // Generate and return the Excel file
+        // 生成并返回Excel文件
         const excelData = createExcel(extractedData);
         headers.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         headers.set("Content-Disposition", "attachment; filename=extracted_data.xlsx");
         return new Response(excelData, { headers });
 
       } else {
-        // For text prompts or text files, return the raw text response
+        // 对于文字、图片或文本文件，直接返回AI的文本回复
         headers.set("Content-Type", "text/plain; charset=utf-8");
         return new Response(responseText, { headers });
       }
@@ -176,6 +174,6 @@ export async function handleRequest(request: Request): Promise<Response> {
   return new Response("Not Found", { status: 404, headers });
 }
 
-// Start the server
+// 启动服务器
 Deno.serve({ port: 8000 }, handleRequest);
 console.log(`Server with ${MODEL_NAME} started on http://localhost:8000`);
