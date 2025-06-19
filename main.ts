@@ -10,7 +10,7 @@ if (!apiKey) {
 
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
-const MODEL_NAME = "gemini-2.0-flash-latest";
+const MODEL_NAME = "gemini-1.5-flash-latest";
 
 // 调用Gemini大模型接口
 async function callGemini(parts: any[]): Promise<string> {
